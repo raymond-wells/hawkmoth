@@ -25,15 +25,21 @@ conversions:
 import hashlib
 import os
 import re
+from itertools import chain, takewhile
+import sys
+from typing import List, Mapping, Sequence
+from collections import namedtuple
 
 from docutils import statemachine
+
 
 def _commonprefix_len(lines):
     # common prefix
     prefix = os.path.commonprefix(lines)
 
     # common prefix length of limited characters
-    return len(prefix) - len(prefix.lstrip(' \t*'))
+    return len(prefix) - len(prefix.lstrip(" \t*"))
+
 
 def _get_prefix_len(lines):
     # ignore lines with just space
@@ -46,13 +52,23 @@ def _get_prefix_len(lines):
 
     return prefix_len
 
-class Docstring():
-    _indent = 0
-    _fmt = ''
 
-    def __init__(self, domain='c', text=None, name=None,
-                 decl_name=None, ttype=None, args=None,
-                 quals=None, meta=None, nest=0):
+class Docstring:
+    _indent = 0
+    _fmt = ""
+
+    def __init__(
+        self,
+        domain="c",
+        text=None,
+        name=None,
+        decl_name=None,
+        ttype=None,
+        args=None,
+        quals=None,
+        meta=None,
+        nest=0,
+    ):
         self._text = text
         self._name = name
         self._decl_name = decl_name
@@ -100,7 +116,7 @@ class Docstring():
     @staticmethod
     def is_doc(comment):
         """Test if comment is a C documentation comment."""
-        return comment.startswith('/**') and comment != '/**/'
+        return comment.startswith("/**") and comment != "/**/"
 
     def _get_header_lines(self):
         name = self._get_decl_name()
@@ -108,23 +124,33 @@ class Docstring():
         ttype = self._ttype
         quals = self._quals
 
-        type_spacer = ''
-        if ttype and not (len(ttype) == 0 or ttype.endswith('*')):
-            type_spacer = ' '
+        type_spacer = ""
+        if ttype and not (len(ttype) == 0 or ttype.endswith("*")):
+            type_spacer = " "
 
-        quals_spacer = ''
+        quals_spacer = ""
         if quals and len(quals) > 0:
-            quals_spacer = ' '
+            quals_spacer = " "
 
-        args = ''
+        args = ""
         if self._args and len(self._args) > 0:
-            pad_type = lambda t: '' if len(t) == 0 or t.endswith('*') or t.endswith('&') else ' '
+            pad_type = (
+                lambda t: ""
+                if len(t) == 0 or t.endswith("*") or t.endswith("&")
+                else " "
+            )
             arg_fmt = lambda t, n: f"{t}{pad_type(t)}{n}"
-            args = ', '.join([arg_fmt(t, n) for t, n in self._args])
+            args = ", ".join([arg_fmt(t, n) for t, n in self._args])
 
-        header = self._fmt.format(domain=domain, name=name, ttype=ttype,
-                                  type_spacer=type_spacer, args=args,
-                                  quals=quals, quals_spacer=quals_spacer)
+        header = self._fmt.format(
+            domain=domain,
+            name=name,
+            ttype=ttype,
+            type_spacer=type_spacer,
+            args=args,
+            quals=quals,
+            quals_spacer=quals_spacer,
+        )
 
         return header.splitlines()
 
@@ -134,8 +160,8 @@ class Docstring():
     @staticmethod
     def _remove_comment_markers(lines):
         """Remove comment markers and line prefixes from comment lines."""
-        lines[0] = re.sub(r'^/\*\*[ \t]*', '', lines[0])
-        lines[-1] = re.sub(r'[ \t]*\*/$', '', lines[-1])
+        lines[0] = re.sub(r"^/\*\*[ \t]*", "", lines[0])
+        lines[-1] = re.sub(r"[ \t]*\*/$", "", lines[-1])
 
         prefix_len = _get_prefix_len(lines[1:-1])
         lines[1:-1] = [line[prefix_len:] for line in lines[1:-1]]
@@ -157,7 +183,7 @@ class Docstring():
             nest (int): Nesting level. For each level, the final block is indented
                 one level. Useful for (e.g.) declaring structure members.
         """
-        lines[:] = ['   ' * nest + line if line else '' for line in lines]
+        lines[:] = ["   " * nest + line if line else "" for line in lines]
 
     def get_docstring(self, transform=None):
         header_lines = self._get_header_lines()
@@ -177,8 +203,8 @@ class Docstring():
 
         Docstring._nest(lines, self._nest)
 
-        if lines[-1] != '':
-            lines.append('')
+        if lines[-1] != "":
+            lines.append("")
 
         return lines
 
@@ -192,19 +218,23 @@ class Docstring():
         return self._name
 
     def get_line(self):
-        return self._meta['line']
+        return self._meta["line"]
+
 
 class TextDocstring(Docstring):
     _indent = 0
-    _fmt = '\n'
+    _fmt = "\n"
+
 
 class VarDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. {domain}:var:: {ttype}{type_spacer}{name}\n\n'
+    _fmt = "\n.. {domain}:var:: {ttype}{type_spacer}{name}\n\n"
+
 
 class TypeDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. {domain}:type:: {name}\n\n'
+    _fmt = "\n.. {domain}:type:: {name}\n\n"
+
 
 class _CompoundDocstring(Docstring):
     def _get_decl_name(self):
@@ -212,48 +242,136 @@ class _CompoundDocstring(Docstring):
         if self._decl_name is None:
             # Sphinx expects @name for anonymous entities. The name must be both
             # stable and unique. Create one.
-            decl_name = hashlib.md5(f'{self._text}{self.get_line()}'.encode()).hexdigest()
+            decl_name = hashlib.md5(
+                f"{self._text}{self.get_line()}".encode()
+            ).hexdigest()
 
-            return f'@anonymous_{decl_name}'
+            return f"@anonymous_{decl_name}"
 
         return self._decl_name
 
+
 class StructDocstring(_CompoundDocstring):
     _indent = 1
-    _fmt = '\n.. {domain}:struct:: {name}\n\n'
+    _fmt = "\n.. {domain}:struct:: {name}\n\n"
+
 
 class UnionDocstring(_CompoundDocstring):
     _indent = 1
-    _fmt = '\n.. {domain}:union:: {name}\n\n'
+    _fmt = "\n.. {domain}:union:: {name}\n\n"
+
 
 class EnumDocstring(_CompoundDocstring):
     _indent = 1
-    _fmt = '\n.. {domain}:enum:: {name}\n\n'
+    _fmt = "\n.. {domain}:enum:: {name}\n\n"
+
 
 class EnumeratorDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. {domain}:enumerator:: {name}\n\n'
+    _fmt = "\n.. {domain}:enumerator:: {name}\n\n"
+
 
 class MemberDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. {domain}:member:: {ttype}{type_spacer}{name}\n\n'
+    _fmt = "\n.. {domain}:member:: {ttype}{type_spacer}{name}\n\n"
+
 
 class MacroDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. c:macro:: {name}\n\n'
+    _fmt = "\n.. c:macro:: {name}\n\n"
+
 
 class MacroFunctionDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. c:macro:: {name}({args})\n\n'
+    _fmt = "\n.. c:macro:: {name}({args})\n\n"
+
+
+ParamInfo = namedtuple("ParamInfo", ["index", "heading", "block_lead_in"])
+ParamExtent = namedtuple("ParamExtent", ["start_index", "end_index"])
+
 
 class FunctionDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. {domain}:function:: {ttype}{type_spacer}{name}({args}){quals_spacer}{quals}\n\n'
+    _fmt = "\n.. {domain}:function:: {ttype}{type_spacer}{name}({args}){quals_spacer}{quals}\n\n"
+    _untyped_param_matcher = re.compile(r"^(\s+:param ([^:]+):)\s*(.+)$")
+
+    def get_docstring(self, transform=None):
+        return self._infer_types(super().get_docstring(transform))
+
+    def _infer_types(self, original_docstring: List[str]) -> Sequence[str]:
+        """
+        Attempts to infer types in documented parameters by looking at the arguments
+        provided.
+        """
+        # TODO: Cleanup.
+        param_info: Mapping[str, ParamInfo] = {
+            name: ParamInfo(index, full_prefix, block_lead_in)
+            for index, full_prefix, name, block_lead_in in map(
+                lambda _t: (_t[0], *_t[1]),
+                filter(
+                    lambda _t: _t[1] is not None,
+                    enumerate(
+                        map(
+                            lambda _m: _m and _m.groups(),
+                            map(self._untyped_param_matcher.match, original_docstring),
+                        )
+                    ),
+                ),
+            )
+        }
+
+        param_extents: Mapping[str, ParamExtent] = {
+            name: ParamExtent(
+                info.index,
+                max(
+                    chain(
+                        [info.index],
+                        map(
+                            lambda _t: _t[0],
+                            takewhile(
+                                lambda _t: _t[1].startswith(" " * len(info[1]))
+                                or all(map(" ".__eq__, _t[1]))
+                                or not _t[1],
+                                enumerate(
+                                    original_docstring[info.index + 1 :],
+                                    start=info.index + 1,
+                                ),
+                            ),
+                        ),
+                    )
+                )
+                + 1,
+            )
+            for name, info in param_info.items()
+        }
+
+        arg_types: Mapping[str, str] = dict(
+            zip(
+                map(
+                    lambda _t: _t[0],
+                    sorted(param_info.items(), key=lambda _t: _t[1][0]),
+                ),
+                map(lambda _t: _t[0], self._args),
+            )
+        )
+
+        # TODO: A more efficient way of doing this.
+        expandable_lines = [[_l] for _l in original_docstring]
+        for name, extents in param_extents.items():
+            indent_level = sum(map(bool, takewhile(" ".__eq__, param_info[name][1])))
+
+            expandable_lines[extents[1] - 1].append(
+                f"{' ' * indent_level}:type {name}: ``{arg_types.get(name)}``"
+            )
+
+        return list(chain.from_iterable(expandable_lines))
+
 
 class ClassDocstring(_CompoundDocstring):
     _indent = 1
-    _fmt = '\n.. cpp:class:: {name}\n\n'
+    _fmt = "\n.. cpp:class:: {name}\n\n"
+
 
 class EnumClassDocstring(Docstring):
     _indent = 1
-    _fmt = '\n.. cpp:enum-class:: {name}\n\n'
+    _fmt = "\n.. cpp:enum-class:: {name}\n\n"
